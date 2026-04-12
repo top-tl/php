@@ -1,0 +1,24 @@
+{
+    "name": "top-tl/toptl",
+    "description": "Official PHP SDK for the TOP.TL Telegram Directory API",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["telegram", "directory", "top.tl", "bot", "api"],
+    "homepage": "https://top.tl",
+    "require": {
+        "php": ">=8.0",
+        "ext-curl": "*",
+        "ext-json": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "TopTL\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "TOP.TL",
+            "homepage": "https://top.tl"
+        }
+    ]
+}
