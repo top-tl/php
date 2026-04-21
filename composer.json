@@ -1,12 +1,17 @@
 {
     "name": "top-tl/toptl",
-    "description": "Official PHP SDK for the TOP.TL Telegram Directory API",
+    "description": "Official PHP SDK for the TOP.TL Telegram directory API — post bot stats, check votes, manage vote webhooks.",
     "type": "library",
     "license": "MIT",
-    "keywords": ["telegram", "directory", "top.tl", "bot", "api"],
+    "keywords": ["telegram", "toptl", "top.tl", "bot", "directory", "api", "sdk"],
     "homepage": "https://top.tl",
+    "support": {
+        "issues": "https://github.com/top-tl/php/issues",
+        "source": "https://github.com/top-tl/php",
+        "docs": "https://top.tl/developers"
+    },
     "require": {
-        "php": ">=8.0",
+        "php": ">=8.1",
         "ext-curl": "*",
         "ext-json": "*"
     },
@@ -16,9 +21,7 @@
         }
     },
     "authors": [
-        {
-            "name": "TOP.TL",
-            "homepage": "https://top.tl"
-        }
-    ]
+        { "name": "TOP.TL", "email": "hello@top.tl", "homepage": "https://top.tl" }
+    ],
+    "minimum-stability": "stable"
 }

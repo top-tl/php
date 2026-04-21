@@ -85,10 +85,14 @@ class Autoposter
     {
         try {
             $stats = ($this->statsCallback)();
-            $memberCount = $stats['memberCount'] ?? null;
-            $groupCount = $stats['groupCount'] ?? null;
 
-            $result = $this->client->postStats($this->username, $memberCount, $groupCount);
+            $result = $this->client->postStats(
+                $this->username,
+                memberCount: isset($stats['memberCount']) ? (int) $stats['memberCount'] : null,
+                groupCount: isset($stats['groupCount']) ? (int) $stats['groupCount'] : null,
+                channelCount: isset($stats['channelCount']) ? (int) $stats['channelCount'] : null,
+                botServes: isset($stats['botServes']) ? (array) $stats['botServes'] : null,
+            );
 
             if ($this->onPost !== null) {
                 ($this->onPost)($result);

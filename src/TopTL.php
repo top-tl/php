@@ -4,117 +4,182 @@ declare(strict_types=1);
 
 namespace TopTL;
 
+use TopTL\Models\GlobalStats;
 use TopTL\Models\Listing;
-use TopTL\Models\Stats;
-use TopTL\Models\VotesResponse;
+use TopTL\Models\StatsResult;
+use TopTL\Models\VoteCheck;
+use TopTL\Models\Voter;
+use TopTL\Models\WebhookConfig;
+use TopTL\Models\WebhookTestResult;
 
-class TopTL
+/**
+ * Synchronous client for the TOP.TL public API.
+ *
+ *   $client = new \TopTL\TopTL('toptl_xxx');
+ *   $listing = $client->getListing('durov');
+ *   $client->postStats('mybot', memberCount: 5000, groupCount: 1200);
+ */
+final class TopTL
 {
     private string $token;
     private string $baseUrl;
+    private int $timeout;
+    private string $userAgent;
 
-    public function __construct(string $token, string $baseUrl = 'https://top.tl/api/v1')
-    {
+    public function __construct(
+        string $token,
+        string $baseUrl = 'https://top.tl/api',
+        int $timeout = 15,
+        ?string $userAgent = null
+    ) {
+        if ($token === '') {
+            throw new \InvalidArgumentException('API token is required');
+        }
         $this->token = $token;
         $this->baseUrl = rtrim($baseUrl, '/');
+        $this->timeout = $timeout;
+        $this->userAgent = 'toptl-php/0.1.0' . ($userAgent !== null ? ' ' . $userAgent : '');
     }
 
-    /**
-     * Get listing info for a username.
-     */
+    // ---- Listings ------------------------------------------------------
+
     public function getListing(string $username): Listing
     {
-        $data = $this->request('GET', "/listing/{$username}");
-        return Listing::fromArray($data);
+        return Listing::fromArray($this->request('GET', "/v1/listing/{$username}"));
     }
 
     /**
-     * Get votes for a listing.
+     * @return Voter[]
      */
-    public function getVotes(string $username): VotesResponse
+    public function getVotes(string $username, ?int $limit = null): array
     {
-        $data = $this->request('GET', "/listing/{$username}/votes");
-        return VotesResponse::fromArray($data);
-    }
-
-    /**
-     * Check if a user has voted for a listing.
-     */
-    public function hasVoted(string $username, int|string $userId): bool
-    {
-        $data = $this->request('GET', "/listing/{$username}/has-voted/{$userId}");
-        return (bool) ($data['voted'] ?? false);
-    }
-
-    /**
-     * Post stats for a listing (member count, group count, etc.).
-     */
-    public function postStats(string $username, ?int $memberCount = null, ?int $groupCount = null): array
-    {
-        $body = [];
-        if ($memberCount !== null) {
-            $body['memberCount'] = $memberCount;
+        $path = "/v1/listing/{$username}/votes";
+        if ($limit !== null) {
+            $path .= '?limit=' . (int) $limit;
         }
-        if ($groupCount !== null) {
-            $body['groupCount'] = $groupCount;
-        }
-
-        return $this->request('POST', "/listing/{$username}/stats", $body);
+        $data = $this->request('GET', $path);
+        $items = is_array($data) && isset($data[0]) ? $data : ($data['items'] ?? []);
+        return array_map([Voter::class, 'fromArray'], $items);
     }
 
-    /**
-     * Get global TOP.TL stats.
-     */
-    public function getStats(): Stats
+    public function hasVoted(string $username, int|string $userId): VoteCheck
     {
-        $data = $this->request('GET', '/stats');
-        return Stats::fromArray($data);
+        $data = $this->request('GET', "/v1/listing/{$username}/has-voted/{$userId}");
+        return VoteCheck::fromArray($data);
     }
 
+    // ---- Stats ---------------------------------------------------------
+
     /**
-     * Make an HTTP request to the API.
+     * Update counters on a listing you own. Only the named args you pass
+     * are sent — nulls are dropped so the server leaves those counters
+     * untouched.
      *
-     * @throws \RuntimeException on HTTP or cURL errors
+     * @param string[]|null $botServes
      */
+    public function postStats(
+        string $username,
+        ?int $memberCount = null,
+        ?int $groupCount = null,
+        ?int $channelCount = null,
+        ?array $botServes = null
+    ): StatsResult {
+        $body = [];
+        if ($memberCount !== null) $body['memberCount'] = $memberCount;
+        if ($groupCount !== null) $body['groupCount'] = $groupCount;
+        if ($channelCount !== null) $body['channelCount'] = $channelCount;
+        if ($botServes !== null) $body['botServes'] = array_values($botServes);
+        if ($body === []) {
+            throw new \InvalidArgumentException(
+                'postStats requires at least one of: memberCount, groupCount, channelCount, botServes'
+            );
+        }
+        return StatsResult::fromArray(
+            $this->request('POST', "/v1/listing/{$username}/stats", $body)
+        );
+    }
+
+    /**
+     * Post stats for up to 25 listings in a single request.
+     *
+     * @param array<int, array{username: string, memberCount?: int, groupCount?: int, channelCount?: int, botServes?: string[]}> $items
+     * @return StatsResult[]
+     */
+    public function batchPostStats(array $items): array
+    {
+        if ($items === []) return [];
+        $rows = [];
+        foreach ($items as $i) {
+            $row = ['username' => $i['username']];
+            foreach (['memberCount', 'groupCount', 'channelCount', 'botServes'] as $k) {
+                if (array_key_exists($k, $i)) $row[$k] = $i[$k];
+            }
+            $rows[] = $row;
+        }
+        $data = $this->request('POST', '/v1/stats/batch', $rows);
+        return array_map([StatsResult::class, 'fromArray'], is_array($data) ? $data : []);
+    }
+
+    public function getGlobalStats(): GlobalStats
+    {
+        return GlobalStats::fromArray($this->request('GET', '/v1/stats'));
+    }
+
+    // ---- Webhooks ------------------------------------------------------
+
+    public function setWebhook(string $username, string $url, ?string $rewardTitle = null): WebhookConfig
+    {
+        $body = ['url' => $url];
+        if ($rewardTitle !== null) $body['rewardTitle'] = $rewardTitle;
+        return WebhookConfig::fromArray(
+            $this->request('PUT', "/v1/listing/{$username}/webhook", $body)
+        );
+    }
+
+    public function testWebhook(string $username): WebhookTestResult
+    {
+        return WebhookTestResult::fromArray(
+            $this->request('POST', "/v1/listing/{$username}/webhook/test")
+        );
+    }
+
+    // ---- Internal ------------------------------------------------------
+
     private function request(string $method, string $path, ?array $body = null): array
     {
-        $url = $this->baseUrl . $path;
-
         $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_URL, $this->baseUrl . $path);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+        curl_setopt($ch, CURLOPT_TIMEOUT, $this->timeout);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'Authorization: Bearer ' . $this->token,
             'Content-Type: application/json',
             'Accept: application/json',
-            'User-Agent: toptl-php/1.0.0',
+            'User-Agent: ' . $this->userAgent,
         ]);
-
-        if ($method === 'POST') {
-            curl_setopt($ch, CURLOPT_POST, true);
-            if ($body !== null) {
-                curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body));
-            }
+        if ($body !== null) {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($body, JSON_UNESCAPED_UNICODE));
         }
-
         $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $error = curl_error($ch);
+        $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $err = curl_error($ch);
         curl_close($ch);
 
         if ($response === false) {
-            throw new \RuntimeException("cURL error: {$error}");
+            throw new Exception\TopTLException("Transport error: {$err}", 0);
         }
 
-        if ($httpCode >= 400) {
-            throw new \RuntimeException("API error (HTTP {$httpCode}): {$response}");
+        $decoded = $response === '' ? [] : json_decode($response, true);
+        if ($response !== '' && json_last_error() !== JSON_ERROR_NONE) {
+            $decoded = ['message' => $response];
         }
 
-        $decoded = json_decode($response, true);
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new \RuntimeException('Failed to decode JSON response: ' . json_last_error_msg());
+        if ($status >= 400) {
+            $message = is_array($decoded) ? ($decoded['message'] ?? ($decoded['error'] ?? 'HTTP ' . $status)) : 'HTTP ' . $status;
+            throw Exception\TopTLException::forStatus($status, (string) $message, $decoded ?? []);
         }
 
-        return $decoded;
+        return is_array($decoded) ? $decoded : [];
     }
 }
